@@ -11,17 +11,19 @@ class Twilio extends Adapter
     @robot = robot
     super robot
 
-  send: (user, strings...) ->
-    message = strings.join "\n"
+  send: (envelope, strings...) ->
+    body = strings.join "\n"
+    user = envelope.user
 
-    @send_sms message, user.id, (err, body) ->
+    @send_sms body, user.phone, (err, message) ->
       if err or not body?
         console.log "Error sending reply SMS: #{err}"
+        console.log JSON.stringify(err, null, 4)
       else
-        console.log "Sending reply SMS: #{message} to #{user.id}"
+        console.log "Sending reply SMS: #{message.sid}, #{body} to #{user.id}"
 
-  reply: (user, strings...) ->
-    @send user, str for str in strings
+  reply: (envelope, strings...) ->
+    @send envelope, str for str in strings
 
   respond: (regex, callback) ->
     @hear regex, callback
@@ -39,39 +41,42 @@ class Twilio extends Adapter
       response.writeHead 200, 'Content-Type': 'text/plain'
       response.end()
 
+    @client = require('twilio')(@sid, @token)
+
     self.emit "connected"
 
   receive_sms: (body, from) ->
     return if body.length is 0
-    user = @userForId from
+    user = @robot.brain.userForId from
+    user.phone = from
 
-		# TODO Assign self.robot.name here instead of 
-    # if body.match(/^Nurph\b/i) is null
-    #   console.log "I'm adding 'Nurph' as a prefix."
-    #   body = 'Nurph' + '' + body
+    # Following the same name matching pattern as the Robot
+    if @robot.alias
+      alias = @robot.alias.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&') # escape alias for regexp
+      newRegex = new RegExp("^(?:#{@robot.alias}[:,]?|#{@robot.name}[:,]?)", "i")
+    else
+      newRegex = new RegExp("^#{@robot.name}[:,]?", "i")
+
+    # Prefix message if there is no match
+    unless body.match(newRegex)
+      body = (@robot.name + " " ) + body
 
     @receive new TextMessage user, body
 
-  send_sms: (message, to, callback) ->
-    auth = new Buffer(@sid + ':' + @token).toString("base64")
-    data = QS.stringify From: @from, To: to, Body: message
-
-    @http("https://api.twilio.com")
-      .path("/2010-04-01/Accounts/#{@sid}/SMS/Messages.json")
-      .header("Authorization", "Basic #{auth}")
-      .header("Content-Type", "application/x-www-form-urlencoded")
-      .post(data) (err, res, body) ->
-        if err
-          callback err
-        else if res.statusCode is 201
-          json = JSON.parse(body)
-          callback null, body
-        else
-          json = JSON.parse(body)
-          callback body.message
+  send_sms: (body, to, callback) ->
+    @client.messages.create
+      to: to
+      from: @from
+      body: body
+    , (err, message) ->
+      if err
+        callback err
+      else
+        json = JSON.parse(message)
+        callback message
+      return
 
 exports.Twilio = Twilio
 
 exports.use = (robot) ->
   new Twilio robot
-
