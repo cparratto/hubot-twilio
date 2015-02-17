@@ -72,7 +72,6 @@ class Twilio extends Adapter
       if err
         callback err
       else
-        json = JSON.parse(message)
         callback message
       return
 
